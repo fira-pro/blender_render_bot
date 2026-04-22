@@ -134,8 +134,15 @@ try:
     bake_pairs = []
     seen_images = {}   # image.name → Image (to deduplicate)
 
-    for obj in bpy.data.objects:
+    # Use view_layer.objects so we only touch objects that are actually
+    # present in the active View Layer.  bpy.data.objects includes ALL
+    # objects in the file (even those in excluded collections), and
+    # calling obj.select_set(True) on them raises a RuntimeError.
+    for obj in bpy.context.view_layer.objects:
         if obj.type != "MESH":
+            continue
+        # Skip objects that are hidden in the viewport or not selectable
+        if obj.hide_get() or not obj.visible_get():
             continue
         for slot in obj.material_slots:
             mat = slot.material
