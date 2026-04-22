@@ -84,7 +84,12 @@ async def run_blender_job(
     Launch Blender headless, stream stdout, call progress_cb with status dicts,
     and return a result dict with keys: success, output_files, error.
     """
-    output_dir = os.path.join(workspace_dir, "output")
+    # Resolve all paths to absolute BEFORE passing to the subprocess.
+    # Using relative paths with cwd set would cause Blender to double-resolve them.
+    blend_path_abs  = os.path.abspath(blend_path)
+    workspace_abs   = os.path.abspath(workspace_dir)
+    script_path_abs = os.path.abspath(script_path)
+    output_dir      = os.path.join(workspace_abs, "output")
     os.makedirs(output_dir, exist_ok=True)
 
     # Build argument list passed after '--' to the Blender Python script
@@ -93,8 +98,8 @@ async def run_blender_job(
     cmd = [
         BLENDER_PATH,
         "--background",
-        blend_path,
-        "--python", script_path,
+        blend_path_abs,
+        "--python", script_path_abs,
         "--",
         *extra_args,
     ]
@@ -105,7 +110,7 @@ async def run_blender_job(
         *cmd,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,   # merge stderr into stdout
-        cwd=workspace_dir,
+        # No cwd — all paths are absolute so Blender resolves them correctly
     )
     set_process_cb(proc)
 

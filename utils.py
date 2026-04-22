@@ -84,16 +84,18 @@ def kb_settings(
         for d in device_options
     ])
 
-    # ── Samples row ───────────────────────────────────────────────────────────
-    sample_opts = ["default", "64", "128", "256", "512", "1024", "2048"]
+    # ── Samples rows (split in two so the keyboard stays readable) ───────────
+    sample_opts_low  = ["default", "1", "4", "8", "16", "32"]
+    sample_opts_high = ["64", "128", "256", "512", "1024", "2048"]
     cur_samples = str(settings.get("samples", "default"))
-    rows.append([
-        Button.inline(
-            f"{'✓ ' if s == cur_samples else ''}{s}",
-            f"cfg:samples:{s}".encode(),
-        )
-        for s in sample_opts
-    ])
+    for row_opts in (sample_opts_low, sample_opts_high):
+        rows.append([
+            Button.inline(
+                f"{'✓ ' if s == cur_samples else ''}{s}",
+                f"cfg:samples:{s}".encode(),
+            )
+            for s in row_opts
+        ])
 
     # ── Denoise row ───────────────────────────────────────────────────────────
     cur_denoise = settings.get("denoise", True)
