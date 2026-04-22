@@ -38,7 +38,7 @@ A headless **Blender 5.1** baking & rendering server controlled entirely via a T
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/youruser/blender_render_bot.git
+git clone https://github.com/fira-pro/blender_render_bot.git
 cd blender_render_bot
 
 # 2. Create and activate a virtual environment
