@@ -148,6 +148,30 @@ def kb_settings(
             ),
         ])
 
+        # Clear before bake
+        cur_clear = settings.get("use_clear", False)
+        rows.append([
+            Button.inline(
+                f"{'✓ ' if cur_clear else ''}🗑 Clear image first",
+                b"cfg:use_clear:true",
+            ),
+            Button.inline(
+                f"{'✓ ' if not cur_clear else ''}Keep background",
+                b"cfg:use_clear:false",
+            ),
+        ])
+
+        # Margin (bleed)
+        margin_opts = ["0", "4", "8", "16", "32", "64"]
+        cur_margin = str(settings.get("margin", 16))
+        rows.append([
+            Button.inline(
+                f"{'✓ ' if m == cur_margin else ''}px{m}",
+                f"cfg:margin:{m}".encode(),
+            )
+            for m in margin_opts
+        ])
+
     # ── Start button ──────────────────────────────────────────────────────────
     rows.append([Button.inline("▶  Start", b"cfg:start")])
     return rows
@@ -215,6 +239,8 @@ def msg_settings_header(operation: str, settings: Dict[str, Any]) -> str:
         lines += [
             f"🖌  **Bake type:** `{settings.get('bake_type', 'COMBINED')}`",
             f"📦  **Bake target:** `{settings.get('bake_target', 'single')}`",
+            f"🗑  **Clear first:** `{'Yes' if settings.get('use_clear', False) else 'No'}`",
+            f"📏  **Margin:** `{settings.get('margin', 16)} px`",
         ]
     lines += ["", "_Tap a button to change a setting, then press ▶ Start._"]
     return "\n".join(lines)

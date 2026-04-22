@@ -36,6 +36,11 @@ DEFAULT_BAKE_SETTINGS: Dict[str, Any] = {
     "tile_size": "default",
     "bake_type": "COMBINED",
     "bake_target": "single",
+    # Whether to clear (fill with transparent black) the target image before baking.
+    # Default False: preserves any background colour already painted on the image.
+    "use_clear": False,
+    # Margin (bleed) in pixels around UV islands.
+    "margin": 16,
 }
 
 BAKE_TYPES: List[str] = [

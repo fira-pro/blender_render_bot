@@ -657,6 +657,10 @@ async def handle_callback(event):
             sess.settings["bake_type"] = val
         elif key == "bake_target":
             sess.settings["bake_target"] = val
+        elif key == "use_clear":
+            sess.settings["use_clear"] = (val == "true")
+        elif key == "margin":
+            sess.settings["margin"] = int(val)
 
         # Refresh keyboard in-place
         text = msg_settings_header(sess.operation, sess.settings)

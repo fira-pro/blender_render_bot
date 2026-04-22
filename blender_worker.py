@@ -195,9 +195,13 @@ def _build_script_args(operation: str, settings: Dict, output_dir: str) -> List[
     ]
 
     if operation == "bake":
+        use_clear = "true" if settings.get("use_clear", False) else "false"
+        margin    = str(settings.get("margin", 16))
         args += [
-            "--bake-type", settings.get("bake_type", "COMBINED"),
+            "--bake-type",   settings.get("bake_type", "COMBINED"),
             "--bake-target", settings.get("bake_target", "single"),
+            "--use-clear",   use_clear,
+            "--margin",      margin,
         ]
 
     return args

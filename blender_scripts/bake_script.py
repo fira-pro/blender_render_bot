@@ -51,6 +51,10 @@ denoise_arg  = get_arg("--denoise", "true").lower() == "true"
 tile_arg     = get_arg("--tile-size", "default")
 bake_type    = get_arg("--bake-type", "COMBINED")
 bake_target  = get_arg("--bake-target", "single")   # "single" | "per_material"
+# Clear the target image before baking (default: false — preserve any background colour)
+use_clear    = get_arg("--use-clear", "false").lower() == "true"
+# Margin (bleed) in pixels around baked UV islands (default: 16)
+margin       = int(get_arg("--margin", "16"))
 output_dir   = get_arg("--output-dir", "/tmp/blender_bake")
 
 os.makedirs(output_dir, exist_ok=True)
@@ -202,8 +206,8 @@ try:
         try:
             bpy.ops.object.bake(
                 type=bake_type,
-                use_clear=(idx == 1),   # clear only on first bake for single-image mode
-                margin=16,
+                use_clear=use_clear,
+                margin=margin,
                 use_selected_to_active=False,
             )
         except RuntimeError as exc:
