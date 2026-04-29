@@ -111,14 +111,36 @@ def kb_settings(
     ])
 
     # ── Tile size row ─────────────────────────────────────────────────────────
-    tile_opts = ["default", "64", "256", "512", "1024", "2048"]
+    tile_opts = ["default", "64", "256", "512", "1024", "2048", "4096"]
     cur_tile = str(settings.get("tile_size", "default"))
     rows.append([
         Button.inline(
-            f"{'✓ ' if t == cur_tile else ''}{t}",
+            f"{'\u2713 ' if t == cur_tile else ''}{t}",
             f"cfg:tile:{t}".encode(),
         )
         for t in tile_opts
+    ])
+
+    # ── Color depth row (applies to the initial OpenEXR save) ───────────────────────
+    depth_opts = [("16", "16-bit half"), ("32", "32-bit float")]
+    cur_depth  = str(settings.get("color_depth", "32"))
+    rows.append([
+        Button.inline(
+            f"{'\u2713 ' if d == cur_depth else ''}{label}",
+            f"cfg:color_depth:{d}".encode(),
+        )
+        for d, label in depth_opts
+    ])
+
+    # ── EXR codec row ──────────────────────────────────────────────────────────────
+    codec_opts = [("PIZ", "PIZ (wavelet)"), ("ZIP", "ZIP (deflate)"), ("ZIPS", "ZIPS"), ("RLE", "RLE")]
+    cur_codec  = str(settings.get("exr_codec", "PIZ"))
+    rows.append([
+        Button.inline(
+            f"{'\u2713 ' if c == cur_codec else ''}{label}",
+            f"cfg:exr_codec:{c}".encode(),
+        )
+        for c, label in codec_opts
     ])
 
     # ── Bake-only rows ────────────────────────────────────────────────────────
@@ -184,7 +206,8 @@ def kb_format(operation: str) -> List[List[Button]]:
     else:
         formats = ["PNG", "EXR", "TIFF"]
     return [
-        [Button.inline(f, f"fmt:{f}".encode()) for f in formats]
+        [Button.inline(f, f"fmt:{f}".encode()) for f in formats],
+        [Button.inline("\U0001f4e6  Raw EXR (no conversion)", b"fmt:RAW_EXR")],
     ]
 
 
@@ -216,33 +239,36 @@ def kb_compression(fmt: str) -> List[List[Button]]:
 def kb_after_job() -> List[List[Button]]:
     """Offered after the result file is sent."""
     return [
+        [Button.inline("\U0001f4e5  Different format", b"after:reformat")],
         [
-            Button.inline("🔄  Another operation", b"after:another"),
-            Button.inline("✅  Done with file", b"after:done"),
-        ]
+            Button.inline("\U0001f504  Another operation", b"after:another"),
+            Button.inline("\u2705  Done with file", b"after:done"),
+        ],
     ]
 
 
 # ── Message composers ─────────────────────────────────────────────────────────
 
 def msg_settings_header(operation: str, settings: Dict[str, Any]) -> str:
-    op_label = "🖼  Render" if operation == "render" else "🎨  Bake"
+    op_label = "\U0001f5bc  Render" if operation == "render" else "\U0001f3a8  Bake"
     lines = [
         f"**{op_label} Settings**",
         "",
-        f"🖥  **Device:** `{settings.get('device', 'CPU')}`",
-        f"🎯  **Samples:** `{settings.get('samples', 'default')}`",
-        f"🔇  **Denoise:** `{'Yes' if settings.get('denoise', True) else 'No'}`",
-        f"📐  **Tile size:** `{settings.get('tile_size', 'default')}`",
+        f"\U0001f5a5  **Device:** `{settings.get('device', 'CPU')}`",
+        f"\U0001f3af  **Samples:** `{settings.get('samples', 'default')}`",
+        f"\U0001f507  **Denoise:** `{'Yes' if settings.get('denoise', True) else 'No'}`",
+        f"\U0001f4d0  **Tile size:** `{settings.get('tile_size', 'default')}`",
+        f"\U0001f3a8  **Color depth:** `{settings.get('color_depth', '32')}-bit`",
+        f"\U0001f4e6  **EXR codec:** `{settings.get('exr_codec', 'PIZ')}`",
     ]
     if operation == "bake":
         lines += [
-            f"🖌  **Bake type:** `{settings.get('bake_type', 'COMBINED')}`",
-            f"📦  **Bake target:** `{settings.get('bake_target', 'single')}`",
-            f"🗑  **Clear first:** `{'Yes' if settings.get('use_clear', False) else 'No'}`",
-            f"📏  **Margin:** `{settings.get('margin', 16)} px`",
+            f"\U0001f58c  **Bake type:** `{settings.get('bake_type', 'COMBINED')}`",
+            f"\U0001f4e6  **Bake target:** `{settings.get('bake_target', 'single')}`",
+            f"\U0001f5d1  **Clear first:** `{'Yes' if settings.get('use_clear', False) else 'No'}`",
+            f"\U0001f4cf  **Margin:** `{settings.get('margin', 16)} px`",
         ]
-    lines += ["", "_Tap a button to change a setting, then press ▶ Start._"]
+    lines += ["", "_Tap a button to change a setting, then press \u25b6 Start._"]
     return "\n".join(lines)
 
 

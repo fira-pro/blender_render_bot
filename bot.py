@@ -373,7 +373,12 @@ async def send_final_file(sess: UserSession) -> None:
 
 
 async def _convert_output(src: str, fmt: str, compression: int) -> Optional[str]:
-    """Convert an output file to the target format using Pillow."""
+    """Convert an output file to the target format using Pillow.
+    If the source is EXR and Pillow cannot read it, returns the raw EXR path
+    so the caller can still upload something.
+    """
+    if fmt == "RAW_EXR":
+        return src   # send as-is
     try:
         from PIL import Image
         ext_map = {
@@ -394,7 +399,7 @@ async def _convert_output(src: str, fmt: str, compression: int) -> Optional[str]
 
         if fmt == "PNG":
             save_kwargs = {"compress_level": min(compression, 9)}
-        elif fmt in ("JPEG",):
+        elif fmt == "JPEG":
             img = img.convert("RGB")
             save_kwargs = {"quality": compression or 95, "optimize": True}
         elif fmt == "WEBP":
@@ -402,7 +407,6 @@ async def _convert_output(src: str, fmt: str, compression: int) -> Optional[str]
         elif fmt == "TIFF":
             save_kwargs = {"compression": "tiff_lzw"}
         elif fmt == "EXR":
-            # EXR needs OpenEXR; if not available, save as TIFF
             try:
                 img.save(dst, format="EXR")
                 return dst
@@ -414,8 +418,9 @@ async def _convert_output(src: str, fmt: str, compression: int) -> Optional[str]
         img.save(dst, format=fmt if fmt != "JPEG" else "JPEG", **save_kwargs)
         return dst
     except Exception as exc:
-        log.error(f"Conversion failed: {exc}")
-        return src   # fall back to original
+        log.error(f"Conversion failed for {src}: {exc}")
+        # Fall back to the raw source file with a warning
+        return src
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -661,6 +666,10 @@ async def handle_callback(event):
             sess.settings["use_clear"] = (val == "true")
         elif key == "margin":
             sess.settings["margin"] = int(val)
+        elif key == "color_depth":
+            sess.settings["color_depth"] = val
+        elif key == "exr_codec":
+            sess.settings["exr_codec"] = val
 
         # Refresh keyboard in-place
         text = msg_settings_header(sess.operation, sess.settings)
@@ -675,16 +684,26 @@ async def handle_callback(event):
     if data.startswith("fmt:"):
         if not sess or sess.state != SessionState.AWAITING_FORMAT:
             return
-        fmt = data.split(":")[1]
+        fmt = data.split(":", 1)[1]   # handles "RAW_EXR" (no extra colons)
         sess.output_format = fmt
-        sess.state = SessionState.AWAITING_COMPRESSION
 
-        kb = kb_compression(fmt)
-        await event.respond(
-            f"🗜  **Compression / quality for {fmt}:**",
-            buttons=kb,
-            parse_mode="md",
-        )
+        if fmt == "RAW_EXR":
+            # No compression step — upload raw EXR immediately
+            sess.output_compression = 0
+            sess.state = SessionState.AWAITING_COMPRESSION
+            await event.respond(
+                "📦  Sending raw EXR file(s) without conversion…",
+                parse_mode="md",
+            )
+            asyncio.create_task(send_final_file(sess))
+        else:
+            sess.state = SessionState.AWAITING_COMPRESSION
+            kb = kb_compression(fmt)
+            await event.respond(
+                f"🗜  **Compression / quality for {fmt}:**",
+                buttons=kb,
+                parse_mode="md",
+            )
         return
 
     # ── Compression selection ──────────────────────────────────────────────────
@@ -708,6 +727,19 @@ async def handle_callback(event):
             return
         if action == "done":
             await cmd_done(event)
+        elif action == "reformat":
+            # Re-download in a different format without re-running Blender
+            if not sess.output_files:
+                await event.respond("\u26a0\ufe0f  No output files available for re-download.")
+                return
+            sess.output_format = None
+            sess.output_compression = None
+            sess.state = SessionState.AWAITING_FORMAT
+            await event.respond(
+                "\U0001f4e5  Choose a different output format:",
+                buttons=kb_format(sess.operation),
+                parse_mode="md",
+            )
         elif action == "another":
             if sess.state not in (SessionState.COMPLETED, SessionState.IDLE):
                 await event.respond("⚠️  Still busy — wait for the current job to finish.")

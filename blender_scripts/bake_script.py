@@ -55,6 +55,9 @@ bake_target  = get_arg("--bake-target", "single")   # "single" | "per_material"
 use_clear    = get_arg("--use-clear", "false").lower() == "true"
 # Margin (bleed) in pixels around baked UV islands (default: 16)
 margin       = int(get_arg("--margin", "16"))
+# EXR output settings
+color_depth  = get_arg("--color-depth", "32")  # "16" = half float, "32" = full float
+exr_codec    = get_arg("--exr-codec",   "PIZ") # lossless: PIZ (wavelet) or ZIP
 output_dir   = get_arg("--output-dir", "/tmp/blender_bake")
 
 os.makedirs(output_dir, exist_ok=True)
@@ -81,15 +84,21 @@ def active_image_texture_node(material):
     return None
 
 
-def save_image(image, output_dir: str) -> str:
-    """Save a Blender image to the output directory as PNG and return the path."""
+def save_image(image, output_dir: str, scene, color_depth: str, exr_codec: str) -> str:
+    """
+    Save a Blender image to the output directory as OpenEXR and return the path.
+    Uses image.save_render() so scene EXR settings (codec, depth) are respected.
+    """
     safe_name = "".join(c if c.isalnum() or c in "-_." else "_" for c in image.name)
-    if not safe_name.lower().endswith(".png"):
-        safe_name += ".png"
-    dest = os.path.join(output_dir, safe_name)
-    image.filepath_raw = dest
-    image.file_format = "PNG"
-    image.save()
+    base = os.path.splitext(safe_name)[0]
+    dest = os.path.join(output_dir, base + ".exr")
+    # Apply EXR settings to the scene render image_settings (used by save_render)
+    ims = scene.render.image_settings
+    ims.file_format  = "OPEN_EXR"
+    ims.color_mode   = "RGBA"
+    ims.color_depth  = color_depth
+    ims.exr_codec    = exr_codec
+    image.save_render(dest, scene=scene)
     return dest
 
 
@@ -219,7 +228,7 @@ try:
 
         # For per_material mode or the last iteration of single mode, save now
         if bake_target == "per_material" or idx == total:
-            dest = save_image(image, output_dir)
+            dest = save_image(image, output_dir, scene, color_depth, exr_codec)
             if dest not in saved_paths:
                 saved_paths.append(dest)
             print(f"  Saved: {dest}", flush=True)
@@ -229,7 +238,7 @@ try:
     # For single-image mode, all materials share the same image — save once
     if bake_target == "single" and not saved_paths:
         for img in seen_images.values():
-            dest = save_image(img, output_dir)
+            dest = save_image(img, output_dir, scene, color_depth, exr_codec)
             if dest not in saved_paths:
                 saved_paths.append(dest)
             print(f"  Saved: {dest}", flush=True)

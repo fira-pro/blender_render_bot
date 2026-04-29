@@ -181,17 +181,21 @@ def _build_script_args(operation: str, settings: Dict, output_dir: str) -> List[
         device_type = device          # e.g. "CUDA", "HIP"
         use_gpu = "true"
 
-    samples = str(settings.get("samples", "default"))
-    denoise = "true" if settings.get("denoise", True) else "false"
+    samples   = str(settings.get("samples", "default"))
+    denoise   = "true" if settings.get("denoise", True) else "false"
     tile_size = str(settings.get("tile_size", "default"))
+    depth     = str(settings.get("color_depth", "32"))
+    codec     = str(settings.get("exr_codec", "PIZ"))
 
     args = [
         "--device-type", device_type,
-        "--use-gpu", use_gpu,
-        "--samples", samples,
-        "--denoise", denoise,
-        "--tile-size", tile_size,
-        "--output-dir", output_dir,
+        "--use-gpu",     use_gpu,
+        "--samples",     samples,
+        "--denoise",     denoise,
+        "--tile-size",   tile_size,
+        "--color-depth", depth,
+        "--exr-codec",   codec,
+        "--output-dir",  output_dir,
     ]
 
     if operation == "bake":

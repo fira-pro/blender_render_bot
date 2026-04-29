@@ -36,12 +36,14 @@ def get_arg(name: str, default: str = "") -> str:
         return default
 
 
-device_type = get_arg("--device-type", "CPU")
-use_gpu = get_arg("--use-gpu", "false").lower() == "true"
-samples_arg = get_arg("--samples", "default")
-denoise_arg = get_arg("--denoise", "true").lower() == "true"
-tile_size_arg = get_arg("--tile-size", "default")
-output_dir = get_arg("--output-dir", "/tmp/blender_output")
+device_type     = get_arg("--device-type", "CPU")
+use_gpu         = get_arg("--use-gpu", "false").lower() == "true"
+samples_arg     = get_arg("--samples", "default")
+denoise_arg     = get_arg("--denoise", "true").lower() == "true"
+tile_size_arg   = get_arg("--tile-size", "default")
+color_depth_arg = get_arg("--color-depth", "32")   # "16" or "32"
+exr_codec_arg   = get_arg("--exr-codec",   "PIZ")  # "PIZ" or "ZIP"
+output_dir      = get_arg("--output-dir",  "/tmp/blender_output")
 
 os.makedirs(output_dir, exist_ok=True)
 
@@ -103,31 +105,33 @@ try:
     # ── Output path ───────────────────────────────────────────────────────────
     output_path = os.path.join(output_dir, "render")
     render.filepath = output_path
-    # Keep existing format settings from the .blend, just override the path
-    # (User can change format later via the bot)
-    render.image_settings.file_format = "PNG"
-    render.image_settings.color_mode = "RGBA"
-    render.image_settings.color_depth = "8"
+    # Save as OpenEXR for maximum dynamic range and color depth.
+    # The user can convert to PNG/JPEG/etc. after baking via the bot.
+    render.image_settings.file_format = "OPEN_EXR"
+    render.image_settings.color_mode  = "RGBA"
+    render.image_settings.color_depth = color_depth_arg   # "16" or "32"
+    render.image_settings.exr_codec   = exr_codec_arg     # "PIZ", "ZIP", …
+    print(f"Output: OpenEXR {color_depth_arg}-bit [{exr_codec_arg}] → {output_dir}", flush=True)
 
     # ── Register completion handlers ──────────────────────────────────────────
     _output_files = []
 
     def on_render_complete(scene, depsgraph=None):
-        # Blender auto-saves if filepath is set; collect the saved path
         fp = bpy.path.abspath(scene.render.filepath)
-        # Blender appends frame number and extension
-        candidate = fp + ".png"
-        if os.path.isfile(candidate):
-            _output_files.append(candidate)
-        else:
-            # scan output_dir for newest file
-            import glob
-            files = sorted(
-                glob.glob(os.path.join(output_dir, "render*")),
-                key=os.path.getmtime,
-            )
-            if files:
-                _output_files.append(files[-1])
+        # Blender appends frame number + extension (e.g. render0001.exr)
+        for ext in (".exr", ".png", ".jpg"):
+            candidate = fp + ext
+            if os.path.isfile(candidate):
+                _output_files.append(candidate)
+                return
+        # Fallback: newest file in output_dir
+        import glob
+        files = sorted(
+            glob.glob(os.path.join(output_dir, "render*")),
+            key=os.path.getmtime,
+        )
+        if files:
+            _output_files.append(files[-1])
 
     bpy.app.handlers.render_complete.append(on_render_complete)
 

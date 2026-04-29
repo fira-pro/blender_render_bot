@@ -27,6 +27,9 @@ DEFAULT_RENDER_SETTINGS: Dict[str, Any] = {
     "samples": "default",
     "denoise": True,
     "tile_size": "default",
+    # Initial EXR save: bit depth and lossless codec
+    "color_depth": "32",   # "16" = half float, "32" = full float
+    "exr_codec":   "PIZ",  # "PIZ" (wavelet) or "ZIP" (deflate)
 }
 
 DEFAULT_BAKE_SETTINGS: Dict[str, Any] = {
@@ -36,11 +39,11 @@ DEFAULT_BAKE_SETTINGS: Dict[str, Any] = {
     "tile_size": "default",
     "bake_type": "COMBINED",
     "bake_target": "single",
-    # Whether to clear (fill with transparent black) the target image before baking.
-    # Default False: preserves any background colour already painted on the image.
     "use_clear": False,
-    # Margin (bleed) in pixels around UV islands.
     "margin": 16,
+    # Initial EXR save: bit depth and lossless codec
+    "color_depth": "32",
+    "exr_codec":   "PIZ",
 }
 
 BAKE_TYPES: List[str] = [
