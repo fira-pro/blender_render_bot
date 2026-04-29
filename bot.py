@@ -259,10 +259,33 @@ async def _send_preview(sess: UserSession, operation: str) -> None:
 
 
 async def _make_thumbnail(file_path: str) -> Optional[str]:
-    """Create a small PNG thumbnail for non-PNG files using Pillow."""
+    """Return a web-friendly preview path for the given output file.
+
+    Priority:
+    1. Blender-generated _preview.png (View Transform applied correctly).
+       - For bake EXRs: <base>_preview.png sits next to the .exr
+       - For render EXRs: render_preview.png in the same output directory
+    2. Pillow thumbnail fallback (linear/no View Transform — OK for data maps,
+       washed-out for colour renders, but beats nothing).
+    3. None (send the file directly if it's already a web format).
+    """
     ext = Path(file_path).suffix.lower()
     if ext in (".png", ".jpg", ".jpeg", ".webp"):
-        return None   # already a web-friendly format, send directly
+        return None   # already displayable
+
+    parent_dir = os.path.dirname(file_path)
+
+    # 1a. Bake preview: <base>_preview.png
+    bake_preview = os.path.splitext(file_path)[0] + "_preview.png"
+    if os.path.isfile(bake_preview):
+        return bake_preview
+
+    # 1b. Render preview: render_preview.png in same directory
+    render_preview = os.path.join(parent_dir, "render_preview.png")
+    if os.path.isfile(render_preview):
+        return render_preview
+
+    # 2. Pillow fallback
     try:
         from PIL import Image
         thumb_path = file_path + "_thumb.png"

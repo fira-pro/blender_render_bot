@@ -84,21 +84,35 @@ def active_image_texture_node(material):
     return None
 
 
-def save_image(image, output_dir: str, scene, color_depth: str, exr_codec: str) -> str:
+def save_exr_raw(image, output_dir: str, color_depth: str):
     """
-    Save a Blender image to the output directory as OpenEXR and return the path.
-    Uses image.save_render() so scene EXR settings (codec, depth) are respected.
+    Save raw OpenEXR via image.save() — zero color management, pure linear data.
+    Returns (abs_path, base_name) for follow-up preview generation.
     """
-    safe_name = "".join(c if c.isalnum() or c in "-_." else "_" for c in image.name)
-    base = os.path.splitext(safe_name)[0]
+    safe = "".join(c if c.isalnum() or c in "-_." else "_" for c in image.name)
+    base = os.path.splitext(safe)[0]
     dest = os.path.join(output_dir, base + ".exr")
-    # Apply EXR settings to the scene render image_settings (used by save_render)
+    image.filepath_raw       = dest
+    image.file_format        = "OPEN_EXR"
+    image.use_half_precision = (color_depth == "16")
+    image.save()
+    return dest, base
+
+
+def save_preview_png(image, output_dir: str, base_name: str, scene) -> str:
+    """Save a PNG with the scene View Transform applied via image.save_render()."""
+    dest = os.path.join(output_dir, base_name + "_preview.png")
     ims = scene.render.image_settings
-    ims.file_format  = "OPEN_EXR"
-    ims.color_mode   = "RGBA"
-    ims.color_depth  = color_depth
-    ims.exr_codec    = exr_codec
-    image.save_render(dest, scene=scene)
+    prev_fmt, prev_dep, prev_mode = ims.file_format, ims.color_depth, ims.color_mode
+    try:
+        ims.file_format = "PNG"
+        ims.color_depth = "8"
+        ims.color_mode  = "RGBA"
+        image.save_render(dest, scene=scene)
+    finally:
+        ims.file_format = prev_fmt
+        ims.color_depth = prev_dep
+        ims.color_mode  = prev_mode
     return dest
 
 
@@ -226,22 +240,28 @@ try:
             )
             continue
 
-        # For per_material mode or the last iteration of single mode, save now
         if bake_target == "per_material" or idx == total:
-            dest = save_image(image, output_dir, scene, color_depth, exr_codec)
-            if dest not in saved_paths:
-                saved_paths.append(dest)
-            print(f"  Saved: {dest}", flush=True)
+            exr_dest, bname = save_exr_raw(image, output_dir, color_depth)
+            if exr_dest not in saved_paths:
+                saved_paths.append(exr_dest)
+            try:
+                save_preview_png(image, output_dir, bname, scene)
+            except Exception as _e:
+                print(f"  preview PNG failed: {_e}", flush=True)
+            print(f"  Saved: {exr_dest}", flush=True)
 
         print(f"BAKE_PROGRESS:{idx}/{total}:{obj_name}", flush=True)
 
-    # For single-image mode, all materials share the same image — save once
     if bake_target == "single" and not saved_paths:
         for img in seen_images.values():
-            dest = save_image(img, output_dir, scene, color_depth, exr_codec)
-            if dest not in saved_paths:
-                saved_paths.append(dest)
-            print(f"  Saved: {dest}", flush=True)
+            exr_dest, bname = save_exr_raw(img, output_dir, color_depth)
+            if exr_dest not in saved_paths:
+                saved_paths.append(exr_dest)
+            try:
+                save_preview_png(img, output_dir, bname, scene)
+            except Exception as _e:
+                print(f"  preview PNG failed: {_e}", flush=True)
+            print(f"  Saved: {exr_dest}", flush=True)
 
     if saved_paths:
         print(f"BAKE_COMPLETE:{'|'.join(saved_paths)}", flush=True)

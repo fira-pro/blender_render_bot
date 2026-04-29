@@ -149,6 +149,26 @@ try:
         )
         _output_files = [f for f in files if os.path.isfile(f)]
 
+    # ── Generate preview PNG with View Transform (Filmic / AgX) applied ──────────
+    preview_path = os.path.join(output_dir, "render_preview.png")
+    try:
+        rr = bpy.data.images.get("Render Result")
+        if rr:
+            ims = render.image_settings
+            prev_fmt, prev_dep, prev_mode = ims.file_format, ims.color_depth, ims.color_mode
+            try:
+                ims.file_format = "PNG"
+                ims.color_depth = "8"
+                ims.color_mode  = "RGBA"
+                rr.save_render(preview_path, scene=scene)
+                print(f"Preview PNG saved: {preview_path}", flush=True)
+            finally:
+                ims.file_format = prev_fmt
+                ims.color_depth = prev_dep
+                ims.color_mode  = prev_mode
+    except Exception as _e:
+        print(f"Preview PNG generation failed: {_e}", flush=True)
+
     if _output_files:
         paths_str = "|".join(_output_files)
         print(f"RENDER_COMPLETE:{paths_str}", flush=True)
