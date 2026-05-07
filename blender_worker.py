@@ -143,12 +143,17 @@ async def run_blender_job(
         # ── Per-image upload (bake) ──────────────────────────────────────────
         m = _RE_IMAGE_COMPLETE.search(line)
         if m and image_complete_cb:
-            await image_complete_cb(m.group(1).strip(), m.group(2).strip(), m.group(3).strip())
+            # create_task so large EXR uploads never block stdout reading
+            asyncio.create_task(
+                image_complete_cb(m.group(1).strip(), m.group(2).strip(), m.group(3).strip())
+            )
 
         # ── Per-frame upload (render) ────────────────────────────────────────
         m = _RE_FRAME_COMPLETE.search(line)
         if m and frame_complete_cb:
-            await frame_complete_cb(int(m.group(1)), m.group(2).strip(), m.group(3).strip())
+            asyncio.create_task(
+                frame_complete_cb(int(m.group(1)), m.group(2).strip(), m.group(3).strip())
+            )
 
         # ── Checkpoint (throttled) ───────────────────────────────────────────
         m = _RE_CHECKPOINT.search(line)
@@ -156,7 +161,7 @@ async def run_blender_job(
             now = time.time()
             if now - last_checkpoint_upload >= CHECKPOINT_INTERVAL:
                 last_checkpoint_upload = now
-                await checkpoint_cb(m.group(1).strip())
+                asyncio.create_task(checkpoint_cb(m.group(1).strip()))
 
         # ── Terminal markers ─────────────────────────────────────────────────
         m = _RE_RENDER_COMPLETE.search(line)
