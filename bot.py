@@ -983,6 +983,9 @@ async def handle_callback(event):
             sess.settings["color_depth"] = val
         elif key == "exr_codec":
             sess.settings["exr_codec"] = val
+        elif key == "frame_end":
+            # "" means "use scene default" (no explicit end frame)
+            sess.settings["frame_end"] = int(val) if val else None
 
         # Refresh keyboard in-place
         text = msg_settings_header(sess.operation, sess.settings)

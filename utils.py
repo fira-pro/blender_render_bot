@@ -194,6 +194,27 @@ def kb_settings(
             for m in margin_opts
         ])
 
+    # ── Render-only: frame range ──────────────────────────────────────────────
+    if operation == "render":
+        # frame_end of 0 / missing means "use scene default (single frame)"
+        end_opts = [
+            ("", "Scene default"),
+            ("1",   "1 frame"),
+            ("10",  "10 frames"),
+            ("50",  "50 frames"),
+            ("100", "100 frames"),
+            ("250", "250 frames"),
+            ("500", "500 frames"),
+        ]
+        cur_end = str(settings.get("frame_end", ""))
+        rows.append([
+            Button.inline(
+                f"{'✓ ' if str(v) == cur_end else ''}{label}",
+                f"cfg:frame_end:{v}".encode(),
+            )
+            for v, label in end_opts
+        ])
+
     # ── Start button ──────────────────────────────────────────────────────────
     rows.append([Button.inline("▶  Start", b"cfg:start")])
     return rows
