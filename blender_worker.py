@@ -29,15 +29,22 @@ _RE_REMAINING = re.compile(r"Remaining:(\d+:\d+(?:\.\d+)?)", re.IGNORECASE)
 _RE_ELAPSED = re.compile(r"\|\s*Time:(\d+:\d+(?:\.\d+)?)", re.IGNORECASE)
 # Bake progress marker emitted by our bake_script.py:
 #   BAKE_PROGRESS:2/8:ObjectName
-_RE_BAKE_PROGRESS = re.compile(r"BAKE_PROGRESS:(\d+)/(\d+):(.+)")
-# Completion markers
+_RE_BAKE_PROGRESS   = re.compile(r"BAKE_PROGRESS:(\d+)/(\d+):(.+)")
+# Per-image / per-frame completion (uploaded immediately)
+_RE_IMAGE_COMPLETE  = re.compile(r"IMAGE_COMPLETE:([^:]+):([^:]+):(.*)")
+_RE_FRAME_COMPLETE  = re.compile(r"FRAME_COMPLETE:(\d+):([^:]+):(.*)")
+# Checkpoint state (JSON) — worker throttles uploads to Telegram
+_RE_CHECKPOINT      = re.compile(r"CHECKPOINT_STATE:(.+)")
+# Overall completion markers
 _RE_RENDER_COMPLETE = re.compile(r"RENDER_COMPLETE:(.+)")
-_RE_BAKE_COMPLETE = re.compile(r"BAKE_COMPLETE:(.+)")
-_RE_RENDER_FAILED = re.compile(r"RENDER_FAILED:(.+)")
-_RE_BAKE_FAILED = re.compile(r"BAKE_FAILED:(.+)")
-# Device detection marker:
-#   DEVICE_AVAILABLE:CUDA
-_RE_DEVICE = re.compile(r"DEVICE_AVAILABLE:(\w+)")
+_RE_BAKE_COMPLETE   = re.compile(r"BAKE_COMPLETE:(.+)")
+_RE_RENDER_FAILED   = re.compile(r"RENDER_FAILED:(.+)")
+_RE_BAKE_FAILED     = re.compile(r"BAKE_FAILED:(.+)")
+# Device detection
+_RE_DEVICE          = re.compile(r"DEVICE_AVAILABLE:(\w+)")
+
+# How often (seconds) to upload a checkpoint even if the job is still running
+CHECKPOINT_INTERVAL = 300   # 5 minutes
 
 
 # ── Device detection ──────────────────────────────────────────────────────────
@@ -77,8 +84,11 @@ async def run_blender_job(
     settings: Dict,
     workspace_dir: str,
     script_path: str,
-    progress_cb: Callable,            # async (info: dict) -> None
-    set_process_cb: Callable,         # sync  (proc) -> None
+    progress_cb: Callable,        # async (info: dict) -> None
+    set_process_cb: Callable,     # sync  (proc) -> None
+    image_complete_cb: Optional[Callable] = None,  # async (img_name, exr, preview) -> None
+    frame_complete_cb: Optional[Callable]  = None, # async (frame_num, exr, preview) -> None
+    checkpoint_cb: Optional[Callable]      = None, # async (state_json: str) -> None
 ) -> Dict:
     """
     Launch Blender headless, stream stdout, call progress_cb with status dicts,
@@ -114,9 +124,10 @@ async def run_blender_job(
     )
     set_process_cb(proc)
 
-    result = {"success": False, "output_files": [], "error": ""}
+    result     = {"success": False, "output_files": [], "error": ""}
     start_time = time.time()
-    stderr_tail: List[str] = []   # keep last 30 lines for error reporting
+    last_checkpoint_upload = 0.0   # epoch timestamp of last checkpoint upload
+    stderr_tail: List[str] = []
 
     async for raw_line in proc.stdout:
         line = raw_line.decode(errors="replace").rstrip()
@@ -129,16 +140,34 @@ async def run_blender_job(
         if info:
             await progress_cb(info)
 
-        # Check for completion/failure markers
+        # ── Per-image upload (bake) ──────────────────────────────────────────
+        m = _RE_IMAGE_COMPLETE.search(line)
+        if m and image_complete_cb:
+            await image_complete_cb(m.group(1).strip(), m.group(2).strip(), m.group(3).strip())
+
+        # ── Per-frame upload (render) ────────────────────────────────────────
+        m = _RE_FRAME_COMPLETE.search(line)
+        if m and frame_complete_cb:
+            await frame_complete_cb(int(m.group(1)), m.group(2).strip(), m.group(3).strip())
+
+        # ── Checkpoint (throttled) ───────────────────────────────────────────
+        m = _RE_CHECKPOINT.search(line)
+        if m and checkpoint_cb:
+            now = time.time()
+            if now - last_checkpoint_upload >= CHECKPOINT_INTERVAL:
+                last_checkpoint_upload = now
+                await checkpoint_cb(m.group(1).strip())
+
+        # ── Terminal markers ─────────────────────────────────────────────────
         m = _RE_RENDER_COMPLETE.search(line)
         if m:
-            result["success"] = True
+            result["success"]      = True
             result["output_files"] = _collect_outputs(m.group(1).strip(), output_dir)
             break
 
         m = _RE_BAKE_COMPLETE.search(line)
         if m:
-            result["success"] = True
+            result["success"]      = True
             result["output_files"] = _collect_outputs(m.group(1).strip(), output_dir)
             break
 
@@ -173,19 +202,18 @@ async def run_blender_job(
 
 def _build_script_args(operation: str, settings: Dict, output_dir: str) -> List[str]:
     device = settings.get("device", "CPU")
-    # Derive device_type (CUDA/HIP/METAL/ONEAPI) vs plain CPU
     if device == "CPU":
         device_type = "CPU"
-        use_gpu = "false"
+        use_gpu     = "false"
     else:
-        device_type = device          # e.g. "CUDA", "HIP"
-        use_gpu = "true"
+        device_type = device
+        use_gpu     = "true"
 
-    samples   = str(settings.get("samples", "default"))
+    samples   = str(settings.get("samples",    "default"))
     denoise   = "true" if settings.get("denoise", True) else "false"
-    tile_size = str(settings.get("tile_size", "default"))
+    tile_size = str(settings.get("tile_size",   "default"))
     depth     = str(settings.get("color_depth", "32"))
-    codec     = str(settings.get("exr_codec", "PIZ"))
+    codec     = str(settings.get("exr_codec",   "PIZ"))
 
     args = [
         "--device-type", device_type,
@@ -202,11 +230,34 @@ def _build_script_args(operation: str, settings: Dict, output_dir: str) -> List[
         use_clear = "true" if settings.get("use_clear", False) else "false"
         margin    = str(settings.get("margin", 16))
         args += [
-            "--bake-type",   settings.get("bake_type", "COMBINED"),
+            "--bake-type",   settings.get("bake_type",   "COMBINED"),
             "--bake-target", settings.get("bake_target", "single"),
             "--use-clear",   use_clear,
             "--margin",      margin,
         ]
+        # Resume args (populated when job is created from a checkpoint)
+        resume = settings.get("_resume", {})
+        if resume.get("completed_images"):
+            args += ["--completed-images",   ",".join(resume["completed_images"])]
+        if resume.get("current_image"):
+            args += ["--resume-image-name",  resume["current_image"]]
+        if resume.get("partial_exr"):
+            args += ["--resume-image-path",  resume["partial_exr"]]
+        if resume.get("done_objects"):
+            args += ["--resume-done-objects", ",".join(resume["done_objects"])]
+
+    elif operation == "render":
+        # Frame range
+        if settings.get("frame_start"):
+            args += ["--frame-start", str(settings["frame_start"])]
+        if settings.get("frame_end"):
+            args += ["--frame-end",   str(settings["frame_end"])]
+        if settings.get("frame_step"):
+            args += ["--frame-step",  str(settings["frame_step"])]
+        # Resume args
+        resume = settings.get("_resume", {})
+        if resume.get("completed_frames"):
+            args += ["--completed-frames", ",".join(str(f) for f in resume["completed_frames"])]
 
     return args
 

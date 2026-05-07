@@ -168,6 +168,15 @@ async def process_job(job: Job) -> None:
         except Exception as exc:
             log.debug(f"Progress edit failed: {exc}")
 
+    async def image_complete_cb(img_name: str, exr_path: str, preview_path: str) -> None:
+        await _on_image_complete(sess, img_name, exr_path, preview_path)
+
+    async def frame_complete_cb(frame_num: int, exr_path: str, preview_path: str) -> None:
+        await _on_frame_complete(sess, frame_num, exr_path, preview_path)
+
+    async def checkpoint_cb(state_json: str) -> None:
+        await _package_checkpoint(sess, job, state_json)
+
     result = await run_blender_job(
         job_id=job.job_id,
         blend_path=job.blend_path,
@@ -177,6 +186,9 @@ async def process_job(job: Job) -> None:
         script_path=script,
         progress_cb=progress_cb,
         set_process_cb=queue.set_process,
+        image_complete_cb=image_complete_cb,
+        frame_complete_cb=frame_complete_cb,
+        checkpoint_cb=checkpoint_cb,
     )
 
     if job.status == "cancelled":
@@ -296,6 +308,273 @@ async def _make_thumbnail(file_path: str) -> Optional[str]:
     except Exception as exc:
         log.warning(f"Thumbnail generation failed: {exc}")
         return None
+
+
+# ── Checkpoint helpers ─────────────────────────────────────────────────────────
+
+async def _on_image_complete(
+    sess: UserSession, img_name: str, exr_path: str, preview_path: str
+) -> None:
+    """Upload a finished bake image immediately and record it in the session."""
+    if not exr_path or not os.path.isfile(exr_path):
+        return
+    file_size  = os.path.getsize(exr_path)
+    send_start = time.time()
+    try:
+        with open(exr_path, "rb") as f:
+            uploaded = await upload_file(client, f)
+        from telethon.tl import types as _tlt
+        from telethon import utils as _tlu
+        attributes, mime = _tlu.get_attributes(exr_path)
+        media = _tlt.InputMediaUploadedDocument(
+            file=uploaded, mime_type=mime,
+            attributes=attributes, force_file=True,
+        )
+        await client.send_file(
+            sess.chat_id, media, force_document=True,
+            caption=(
+                f"✅  **{img_name}** baked — "
+                f"{fmt_size(file_size)} "
+                f"({fmt_duration(time.time() - send_start)})"
+            ),
+            parse_mode="md",
+        )
+        if img_name not in sess.completed_image_names:
+            sess.completed_image_names.append(img_name)
+    except Exception as exc:
+        log.error(f"_on_image_complete failed for '{img_name}': {exc}")
+
+
+async def _on_frame_complete(
+    sess: UserSession, frame_num: int, exr_path: str, preview_path: str
+) -> None:
+    """Upload a finished render frame immediately and record it in the session."""
+    if not exr_path or not os.path.isfile(exr_path):
+        return
+    file_size  = os.path.getsize(exr_path)
+    send_start = time.time()
+    try:
+        with open(exr_path, "rb") as f:
+            uploaded = await upload_file(client, f)
+        from telethon.tl import types as _tlt
+        from telethon import utils as _tlu
+        attributes, mime = _tlu.get_attributes(exr_path)
+        media = _tlt.InputMediaUploadedDocument(
+            file=uploaded, mime_type=mime,
+            attributes=attributes, force_file=True,
+        )
+        await client.send_file(
+            sess.chat_id, media, force_document=True,
+            caption=(
+                f"🎞  **Frame {frame_num}** — "
+                f"{fmt_size(file_size)} "
+                f"({fmt_duration(time.time() - send_start)})"
+            ),
+            parse_mode="md",
+        )
+        if frame_num not in sess.completed_frames:
+            sess.completed_frames.append(frame_num)
+    except Exception as exc:
+        log.error(f"_on_frame_complete failed for frame {frame_num}: {exc}")
+
+
+async def _package_checkpoint(sess: UserSession, job: Job, state_json: str) -> None:
+    """Package a checkpoint ZIP and upload it to Telegram, replacing the previous one."""
+    import io
+    import json as _json
+    import zipfile
+
+    try:
+        state = _json.loads(state_json)
+    except Exception as exc:
+        log.warning(f"Checkpoint state JSON parse failed: {exc}")
+        return
+
+    ws = workspace_for(job.job_id)
+    zip_name = f"checkpoint_{job.job_id[:8]}_checkpoint.zip"
+    zip_path = os.path.join(ws, zip_name)
+
+    chk_data = {
+        **state,
+        "job_id":    job.job_id,
+        "operation": job.operation,
+        "settings":  {k: v for k, v in job.settings.items() if not k.startswith("_")},
+        "blend_source": {
+            "file_id_info": sess.blend_file_id,
+            "filename":     os.path.basename(sess.blend_path),
+        },
+    }
+
+    partial_exr = state.get("partial_exr", "")
+    try:
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("checkpoint.json", _json.dumps(chk_data, indent=2))
+            if partial_exr and os.path.isfile(partial_exr):
+                zf.write(partial_exr, os.path.basename(partial_exr))
+    except Exception as exc:
+        log.error(f"Checkpoint ZIP creation failed: {exc}")
+        return
+
+    # Delete the previous checkpoint message
+    if sess.checkpoint_msg_id:
+        try:
+            await client.delete_messages(sess.chat_id, [sess.checkpoint_msg_id])
+        except Exception:
+            pass
+        sess.checkpoint_msg_id = None
+
+    # Upload new checkpoint
+    try:
+        with open(zip_path, "rb") as f:
+            uploaded = await upload_file(client, f)
+        from telethon.tl import types as _tlt
+        from telethon import utils as _tlu
+        attributes, mime = _tlu.get_attributes(zip_path)
+        media = _tlt.InputMediaUploadedDocument(
+            file=uploaded, mime_type="application/zip",
+            attributes=attributes, force_file=True,
+        )
+        msg = await client.send_file(
+            sess.chat_id, media, force_document=True,
+            caption=(
+                "📦  **Checkpoint saved**\n"
+                "_Forward this file to resume if the session ends._"
+            ),
+            parse_mode="md",
+        )
+        sess.checkpoint_msg_id = msg.id
+        log.info(f"Checkpoint uploaded: {zip_name} (msg {msg.id})")
+    except Exception as exc:
+        log.error(f"Checkpoint upload failed: {exc}")
+
+
+async def _handle_checkpoint_resume(event, doc, fname: str) -> None:
+    """Handle a *_checkpoint.zip forwarded back to the bot to resume a job."""
+    import json as _json
+    import zipfile
+
+    user_id = event.sender_id
+    chat_id = event.chat_id
+
+    sess = queue.get_session(user_id)
+    if sess and sess.state in (SessionState.RUNNING, SessionState.QUEUED):
+        await event.respond(
+            "⚠️  A job is still active. Use /cancel first.", parse_mode="md"
+        )
+        return
+
+    # Download checkpoint ZIP to a temp workspace
+    job_id   = make_job_id()
+    ws       = workspace_for(job_id)
+    zip_path = os.path.join(ws, fname)
+
+    dl_msg = await event.respond("📥  Loading checkpoint…", parse_mode="md")
+    try:
+        with open(zip_path, "wb") as f:
+            await download_file(client, doc, f)
+    except Exception as exc:
+        await client.edit_message(chat_id, dl_msg.id, f"❌  Download failed: {exc}")
+        return
+
+    # Extract checkpoint.json and optional partial EXR
+    try:
+        with zipfile.ZipFile(zip_path, "r") as zf:
+            chk = _json.loads(zf.read("checkpoint.json"))
+            partial_exr_dest = ""
+            stored_exr_name  = os.path.basename(chk.get("partial_exr", ""))
+            if stored_exr_name and stored_exr_name in zf.namelist():
+                zf.extract(stored_exr_name, ws)
+                partial_exr_dest = os.path.join(ws, stored_exr_name)
+    except Exception as exc:
+        await client.edit_message(chat_id, dl_msg.id, f"❌  Invalid checkpoint: {exc}")
+        return
+
+    blend_source  = chk.get("blend_source", {})
+    file_id_info  = blend_source.get("file_id_info")
+    blend_filename = blend_source.get("filename", "scene.blend")
+    operation      = chk.get("operation", "bake")
+    settings       = dict(chk.get("settings", {}))
+
+    if not file_id_info:
+        await client.edit_message(
+            chat_id, dl_msg.id,
+            "⚠️  Checkpoint has no `.blend` reference.\n"
+            "Please send the `.blend` file manually to continue."
+        )
+        return
+
+    # Re-download the .blend from Telegram using the stored document reference
+    blend_dest = os.path.join(ws, blend_filename)
+    await client.edit_message(
+        chat_id, dl_msg.id,
+        f"📥  Re-downloading `{blend_filename}` from Telegram…", parse_mode="md"
+    )
+    try:
+        from telethon.tl.types import InputDocument
+        input_doc = InputDocument(
+            id=file_id_info["id"],
+            access_hash=file_id_info["access_hash"],
+            file_reference=bytes(file_id_info["file_reference"]),
+        )
+        with open(blend_dest, "wb") as f:
+            await download_file(client, input_doc, f)
+    except Exception as exc:
+        await client.edit_message(
+            chat_id, dl_msg.id, f"❌  Could not re-download `.blend`: {exc}"
+        )
+        return
+
+    # Build _resume state injected into settings
+    resume_state: Dict[str, Any] = {}
+    if operation == "bake":
+        resume_state = {
+            "completed_images": chk.get("completed_images", []),
+            "current_image":    chk.get("current_image",    ""),
+            "done_objects":     chk.get("done_objects",     []),
+            "partial_exr":      partial_exr_dest or chk.get("partial_exr", ""),
+        }
+    elif operation == "render":
+        resume_state = {
+            "completed_frames": chk.get("completed_frames", []),
+        }
+        for k in ("frame_start", "frame_end", "frame_step"):
+            if chk.get(k):
+                settings[k] = chk[k]
+
+    settings["_resume"] = resume_state
+
+    # Clean up the old session if present
+    if sess and sess.job_id:
+        cleanup_workspace(workspace_for(sess.job_id))
+    queue.delete_session(user_id)
+
+    # Create new session pre-filled from checkpoint
+    new_sess = queue.create_session(user_id, chat_id, blend_dest)
+    new_sess.job_id                = job_id
+    new_sess.operation             = operation
+    new_sess.settings              = settings
+    new_sess.state                 = SessionState.CONFIGURING
+    new_sess.blend_file_id         = file_id_info
+    new_sess.completed_image_names = list(chk.get("completed_images", []))
+    new_sess.completed_frames      = [int(f) for f in chk.get("completed_frames", [])]
+
+    completed_count = (
+        len(new_sess.completed_image_names) if operation == "bake"
+        else len(new_sess.completed_frames)
+    )
+    unit = "image(s)" if operation == "bake" else "frame(s)"
+
+    text = (
+        f"✅  **Checkpoint loaded!**\n"
+        f"Operation: `{operation}` · {completed_count} {unit} already done\n\n"
+    ) + msg_settings_header(operation, settings)
+
+    await client.edit_message(chat_id, dl_msg.id, text, parse_mode="md")
+    await client.send_message(
+        chat_id, "Adjust settings or press **▶ Start** to resume.",
+        buttons=kb_settings(operation, settings, available_gpu_types),
+        parse_mode="md",
+    )
 
 
 # ── File sending after format/compression choice ───────────────────────────────
@@ -539,6 +818,10 @@ async def handle_message(event):
             fname = attr.file_name
             break
 
+    if fname.lower().endswith("_checkpoint.zip"):
+        await _handle_checkpoint_resume(event, doc, fname)
+        return
+
     if not fname.lower().endswith(".blend"):
         await event.respond(
             "⚠️  Please send a `.blend` file.", parse_mode="md"
@@ -609,7 +892,14 @@ async def handle_message(event):
     # Create session
     sess = queue.create_session(event.sender_id, event.chat_id, blend_dest)
     sess.job_id = job_id
-    sess.state = SessionState.AWAITING_OPERATION
+    sess.state  = SessionState.AWAITING_OPERATION
+    # Store document reference so a checkpoint can redownload the .blend automatically
+    sess.blend_file_id = {
+        "id":             doc.id,
+        "access_hash":   doc.access_hash,
+        "file_reference": list(doc.file_reference),
+        "filename":      fname,
+    }
 
     await client.send_message(
         event.chat_id,

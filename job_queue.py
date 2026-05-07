@@ -72,6 +72,19 @@ class UserSession:
     # Chosen output format after job finishes
     output_format: Optional[str] = None
     output_compression: Optional[int] = None
+
+    # ── Checkpoint / resume fields ────────────────────────────────────────────
+    # Telegram file_id of the original .blend message (for auto-redownload on resume)
+    blend_file_id: Optional[str] = None
+    # Message ID of the last checkpoint ZIP sent to Telegram (for deletion before re-send)
+    checkpoint_msg_id: Optional[int] = None
+    # Bake: images fully done this session, with their Telegram file_ids
+    completed_image_names: List[str] = field(default_factory=list)
+    telegram_image_file_ids: Dict[str, str] = field(default_factory=dict)
+    # Render: frames fully done, with their Telegram file_ids
+    completed_frames: List[int] = field(default_factory=list)
+    telegram_frame_file_ids: Dict[str, str] = field(default_factory=dict)
+
     # Housekeeping
     created_at: float = field(default_factory=time.time)
 
